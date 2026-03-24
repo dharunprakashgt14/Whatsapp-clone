@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Environment (never commit real secrets)
+server/.env
+client/.env
+.env
+.env.local
+.env.*.local
+
+# Uploads (user-generated files)
+server/uploads/*
+!server/uploads/.gitkeep
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Build output
+client/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
