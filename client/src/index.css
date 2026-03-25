@@ -780,14 +780,19 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  overflow: hidden;
   gap: 0 5px;
-  row-gap: 2px;
   align-self: flex-end;
   margin-top: 2px;
   padding-top: 1px;
   pointer-events: none;
   line-height: 1.15;
+}
+
+.message-meta-row > * {
+  flex-shrink: 0;
 }
 
 .message-bubble.sent .message-meta-row .message-time {

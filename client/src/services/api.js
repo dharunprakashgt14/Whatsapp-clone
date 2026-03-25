@@ -1,5 +1,3 @@
-import axios from 'axios';
-
 /** Backend origin (no trailing slash). Set VITE_SERVER_URL in Vercel / .env for production. */
 const SERVER_BASE_URL =
   (import.meta.env.VITE_SERVER_URL && String(import.meta.env.VITE_SERVER_URL).replace(/\/$/, '')) ||
