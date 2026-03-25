@@ -1,3 +1,4 @@
+<img width="1919" height="973" alt="image" src="https://github.com/user-attachments/assets/ee499cf6-43c6-40cc-838e-6c1202a8a9b5" />
 # WhatsApp Web Clone (Full Stack)
 
 A **WhatsApp-inspired** real-time chat application: **React (Vite)** frontend, **Node.js + Express** backend, **MongoDB** for data, and **Socket.IO** for live updates. Built as a full-stack demonstration project (e.g. CartRabbit take-home / portfolio).
