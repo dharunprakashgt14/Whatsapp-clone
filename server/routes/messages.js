@@ -1,51 +1,50 @@
-const express = require('express');
-const router = express.Router();
-const Message = require('../models/Message');
-const Conversation = require('../models/Conversation');
-const { isUserOnline } = require('../socket/socketHandler');
+const express = require('express'); // import express
+const router = express.Router(); // create router
+const Message = require('../models/Message'); // import message model
+const Conversation = require('../models/Conversation'); // import conversation model
+const { isUserOnline } = require('../socket/socketHandler'); // import online check function
 
 // Send a message
-router.post('/', async (req, res) => {
+router.post('/', async (req, res) => { // route to send message
   try {
     const {
-      conversationId,
-      sender,
-      text,
-      replyTo,
-      forwarded,
-      type = 'text',
-      fileUrl = '',
-      fileName = '',
-      fileSize = 0,
-      mimeType = '',
-      durationSec = 0,
+      conversationId, // conversation id
+      sender, // sender id
+      text, // message text
+      replyTo, // reply message reference
+      forwarded, // forwarded flag
+      type = 'text', // message type
+      fileUrl = '', // file URL
+      fileName = '', // file name
+      fileSize = 0, // file size
+      mimeType = '', // file type
+      durationSec = 0, // duration for media
     } = req.body;
 
-    if (!conversationId || !sender) {
+    if (!conversationId || !sender) { // validate required fields
       return res.status(400).json({ error: 'conversationId and sender are required' });
     }
 
-    const trimmedText = (text || '').trim();
-    const hasFile = Boolean(fileUrl);
-    if (!trimmedText && !hasFile) {
+    const trimmedText = (text || '').trim(); // clean text
+    const hasFile = Boolean(fileUrl); // check file existence
+    if (!trimmedText && !hasFile) { // validate message content
       return res.status(400).json({ error: 'Message cannot be empty' });
     }
 
-    // Verify conversation exists
-    const conversation = await Conversation.findById(conversationId);
-    if (!conversation) {
+    const conversation = await Conversation.findById(conversationId); // fetch conversation
+    if (!conversation) { // check existence
       return res.status(404).json({ error: 'Conversation not found' });
     }
 
-    // Determine the receiver
-    const receiverId = conversation.participants.find(
+    const receiverId = conversation.participants.find( // find receiver
       (p) => p.toString() !== sender
     );
 
-    // Check if receiver is online — if so, mark as delivered immediately
-    const initialStatus = receiverId && isUserOnline(receiverId.toString()) ? 'delivered' : 'sent';
+    const initialStatus = receiverId && isUserOnline(receiverId.toString()) // check online
+      ? 'delivered'
+      : 'sent';
 
-    const message = new Message({
+    const message = new Message({ // create message
       conversationId,
       sender,
       text: trimmedText,
@@ -59,27 +58,24 @@ router.post('/', async (req, res) => {
       mimeType,
       durationSec,
     });
-    await message.save();
+    await message.save(); // save message
 
-    // Update conversation's last message
-    conversation.lastMessage = {
+    conversation.lastMessage = { // update last message
       text: trimmedText || (type === 'voice' ? 'Voice message' : (fileName || 'Attachment')),
       sender,
       timestamp: message.createdAt,
     };
 
-    // Increment unread count for other participants
-    conversation.participants.forEach((participantId) => {
+    conversation.participants.forEach((participantId) => { // update unread count
       if (participantId.toString() !== sender) {
         const currentCount = conversation.unreadCount.get(participantId.toString()) || 0;
         conversation.unreadCount.set(participantId.toString(), currentCount + 1);
       }
     });
 
-    await conversation.save();
+    await conversation.save(); // save conversation
 
-    // Populate sender info and replyTo
-    const populatedMessage = await Message.findById(message._id)
+    const populatedMessage = await Message.findById(message._id) // populate message
       .populate('sender', 'name email avatar')
       .populate({
         path: 'replyTo',
@@ -87,19 +83,15 @@ router.post('/', async (req, res) => {
         populate: { path: 'sender', select: 'name' },
       });
 
-    // Emit message via Socket.IO
-    const io = req.app.get('io');
+    const io = req.app.get('io'); // get socket instance
 
-    // Emit to the conversation room
-    io.to(conversationId).emit('newMessage', populatedMessage);
+    io.to(conversationId).emit('newMessage', populatedMessage); // emit to room
 
-    // Also emit to each participant's personal room (for users not yet in the conversation room)
-    conversation.participants.forEach((participantId) => {
+    conversation.participants.forEach((participantId) => { // emit to users
       io.to(participantId.toString()).emit('newMessage', populatedMessage);
     });
 
-    // Emit conversation update to all participants
-    conversation.participants.forEach((participantId) => {
+    conversation.participants.forEach((participantId) => { // emit conversation update
       io.to(participantId.toString()).emit('conversationUpdated', {
         conversationId,
         lastMessage: conversation.lastMessage,
@@ -107,8 +99,7 @@ router.post('/', async (req, res) => {
       });
     });
 
-    // If message was auto-delivered, notify the sender about the delivery status
-    if (initialStatus === 'delivered') {
+    if (initialStatus === 'delivered') { // update delivery status
       io.to(conversationId).emit('messageStatusUpdate', {
         messageId: populatedMessage._id.toString(),
         status: 'delivered',
@@ -119,48 +110,46 @@ router.post('/', async (req, res) => {
       });
     }
 
-    res.status(201).json(populatedMessage);
+    res.status(201).json(populatedMessage); // send response
   } catch (err) {
-    console.error('Send message error:', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error('Send message error:', err); // log error
+    res.status(500).json({ error: 'Server error' }); // error response
   }
 });
 
-// Get messages for a conversation
-router.get('/:conversationId', async (req, res) => {
+// Get messages
+router.get('/:conversationId', async (req, res) => { // fetch messages
   try {
-    const { page = 1, limit = 50 } = req.query;
-    const { userId } = req.query;
-    const skip = (page - 1) * limit;
+    const { page = 1, limit = 50 } = req.query; // pagination
+    const { userId } = req.query; // user id
+    const skip = (page - 1) * limit; // calculate skip
 
-    let query = { conversationId: req.params.conversationId };
+    let query = { conversationId: req.params.conversationId }; // base query
 
-    // Exclude messages deleted for this user
-    if (userId) {
+    if (userId) { // exclude deleted messages
       query.deletedFor = { $ne: userId };
     }
 
-    const messages = await Message.find(query)
+    const messages = await Message.find(query) // fetch messages
       .populate('sender', 'name email avatar')
       .populate({
         path: 'replyTo',
         select: 'text sender deletedForEveryone',
         populate: { path: 'sender', select: 'name' },
       })
-      .sort({ createdAt: 1 })
-      .skip(skip)
-      .limit(parseInt(limit));
+      .sort({ createdAt: 1 }) // sort ascending
+      .skip(skip) // pagination skip
+      .limit(parseInt(limit)); // pagination limit
 
-    // Transform deleted-for-everyone messages
-    const transformedMessages = messages.map((msg) => {
+    const transformedMessages = messages.map((msg) => { // transform messages
       const m = msg.toObject();
       if (m.deletedForEveryone) {
-        m.text = '';
+        m.text = ''; // hide text
       }
       return m;
     });
 
-    const total = await Message.countDocuments(query);
+    const total = await Message.countDocuments(query); // total count
 
     res.json({
       messages: transformedMessages,
@@ -172,78 +161,67 @@ router.get('/:conversationId', async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ error: 'Server error' }); // error
   }
 });
 
-// Delete a message (using POST because DELETE body is unreliable)
-router.post('/:messageId/delete', async (req, res) => {
+// Delete message
+router.post('/:messageId/delete', async (req, res) => { // delete route
   try {
-    const { userId, deleteType } = req.body; // deleteType: 'me' or 'everyone'
-    console.log(`[DELETE] messageId=${req.params.messageId} userId=${userId} deleteType=${deleteType}`);
+    const { userId, deleteType } = req.body; // inputs
 
-    const message = await Message.findById(req.params.messageId);
+    const message = await Message.findById(req.params.messageId); // find message
 
     if (!message) {
-      console.log('[DELETE] Message not found');
-      return res.status(404).json({ error: 'Message not found' });
+      return res.status(404).json({ error: 'Message not found' }); // not found
     }
 
-    const io = req.app.get('io');
+    const io = req.app.get('io'); // socket
 
-    if (deleteType === 'everyone') {
-      // Only sender can delete for everyone
-      const msgSenderId = String(message.sender._id || message.sender);
-      console.log(`[DELETE] Comparing sender=${msgSenderId} vs userId=${userId}`);
+    if (deleteType === 'everyone') { // delete for all
+      const msgSenderId = String(message.sender._id || message.sender); // sender id
 
       if (msgSenderId !== String(userId)) {
-        console.log('[DELETE] DENIED: Not the sender');
         return res.status(403).json({ error: 'Only the sender can delete for everyone' });
       }
 
-      message.deletedForEveryone = true;
-      message.text = '';
-      await message.save();
-      console.log('[DELETE] Message marked as deletedForEveryone in DB');
+      message.deletedForEveryone = true; // mark deleted
+      message.text = ''; // clear text
+      await message.save(); // save
 
-      // Notify all users in conversation via personal rooms
-      const conversation = await Conversation.findById(message.conversationId);
+      const conversation = await Conversation.findById(message.conversationId); // fetch convo
       if (conversation) {
-        conversation.participants.forEach((p) => {
+        conversation.participants.forEach((p) => { // notify users
           io.to(p.toString()).emit('messageDeleted', {
             messageId: message._id.toString(),
             deleteType: 'everyone',
           });
         });
-        console.log(`[DELETE] Emitted messageDeleted to ${conversation.participants.length} participants`);
       }
     } else {
-      // Delete for me — just add user to deletedFor array
-      if (!message.deletedFor.map(String).includes(String(userId))) {
+      if (!message.deletedFor.map(String).includes(String(userId))) { // delete for me
         message.deletedFor.push(userId);
         await message.save();
-        console.log('[DELETE] Message deleted for user:', userId);
       }
     }
 
-    res.json({ message: 'Message deleted', deleteType });
+    res.json({ message: 'Message deleted', deleteType }); // response
   } catch (err) {
-    console.error('Delete message error:', err);
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(500).json({ error: 'Server error' }); // error
   }
 });
 
-// Edit a message
-router.put('/:messageId', async (req, res) => {
+// Edit message
+router.put('/:messageId', async (req, res) => { // edit route
   try {
-    const { userId, text } = req.body;
-    const message = await Message.findById(req.params.messageId);
+    const { userId, text } = req.body; // inputs
+    const message = await Message.findById(req.params.messageId); // find message
 
     if (!message) {
       return res.status(404).json({ error: 'Message not found' });
     }
 
-    const editSenderId = message.sender._id ? message.sender._id.toString() : message.sender.toString();
+    const editSenderId = message.sender._id ? message.sender._id.toString() : message.sender.toString(); // sender id
     if (editSenderId !== userId) {
       return res.status(403).json({ error: 'Only the sender can edit the message' });
     }
@@ -252,15 +230,14 @@ router.put('/:messageId', async (req, res) => {
       return res.status(400).json({ error: 'Message text cannot be empty' });
     }
 
-    message.text = text.trim();
-    message.edited = true;
-    await message.save();
+    message.text = text.trim(); // update text
+    message.edited = true; // mark edited
+    await message.save(); // save
 
-    const io = req.app.get('io');
-    // Emit to each participant's personal room (reliable cross-user delivery)
-    const conversation = await Conversation.findById(message.conversationId);
+    const io = req.app.get('io'); // socket
+    const conversation = await Conversation.findById(message.conversationId); // fetch convo
     if (conversation) {
-      conversation.participants.forEach((p) => {
+      conversation.participants.forEach((p) => { // notify users
         io.to(p.toString()).emit('messageEdited', {
           messageId: message._id.toString(),
           text: message.text,
@@ -269,47 +246,42 @@ router.put('/:messageId', async (req, res) => {
       });
     }
 
-    res.json(message);
+    res.json(message); // response
   } catch (err) {
-    console.error('Edit message error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Toggle reaction on a message
-router.post('/:messageId/react', async (req, res) => {
+// React to message
+router.post('/:messageId/react', async (req, res) => { // reaction route
   try {
-    const { userId, emoji } = req.body;
-    const message = await Message.findById(req.params.messageId);
+    const { userId, emoji } = req.body; // inputs
+    const message = await Message.findById(req.params.messageId); // find message
 
     if (!message) {
       return res.status(404).json({ error: 'Message not found' });
     }
 
-    // Get current users for this emoji
-    const currentUsers = message.reactions.get(emoji) || [];
-    const userIndex = currentUsers.indexOf(userId);
+    const currentUsers = message.reactions.get(emoji) || []; // get users
+    const userIndex = currentUsers.indexOf(userId); // check user
 
     if (userIndex > -1) {
-      // Remove reaction
-      currentUsers.splice(userIndex, 1);
+      currentUsers.splice(userIndex, 1); // remove reaction
       if (currentUsers.length === 0) {
         message.reactions.delete(emoji);
       } else {
         message.reactions.set(emoji, currentUsers);
       }
     } else {
-      // Add reaction
-      currentUsers.push(userId);
+      currentUsers.push(userId); // add reaction
       message.reactions.set(emoji, currentUsers);
     }
 
-    await message.save();
+    await message.save(); // save
 
-    const io = req.app.get('io');
-    const reactionsObj = Object.fromEntries(message.reactions);
-    // Emit to each participant's personal room (reliable cross-user delivery)
-    const conversation = await Conversation.findById(message.conversationId);
+    const io = req.app.get('io'); // socket
+    const reactionsObj = Object.fromEntries(message.reactions); // convert map
+    const conversation = await Conversation.findById(message.conversationId); // convo
     if (conversation) {
       conversation.participants.forEach((p) => {
         io.to(p.toString()).emit('messageReaction', {
@@ -319,34 +291,31 @@ router.post('/:messageId/react', async (req, res) => {
       });
     }
 
-    res.json({ reactions: reactionsObj });
+    res.json({ reactions: reactionsObj }); // response
   } catch (err) {
-    console.error('React to message error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Forward a message
-router.post('/forward', async (req, res) => {
+// Forward message
+router.post('/forward', async (req, res) => { // forward route
   try {
-    const { messageId, sender, targetConversationId } = req.body;
+    const { messageId, sender, targetConversationId } = req.body; // inputs
 
-    const original = await Message.findById(messageId);
+    const original = await Message.findById(messageId); // original msg
     if (!original) {
       return res.status(404).json({ error: 'Original message not found' });
     }
 
-    const conversation = await Conversation.findById(targetConversationId);
+    const conversation = await Conversation.findById(targetConversationId); // target convo
     if (!conversation) {
       return res.status(404).json({ error: 'Target conversation not found' });
     }
 
-    const receiverId = conversation.participants.find(
-      (p) => p.toString() !== sender
-    );
-    const initialStatus = receiverId && isUserOnline(receiverId.toString()) ? 'delivered' : 'sent';
+    const receiverId = conversation.participants.find((p) => p.toString() !== sender); // receiver
+    const initialStatus = receiverId && isUserOnline(receiverId.toString()) ? 'delivered' : 'sent'; // status
 
-    const forwardedMsg = new Message({
+    const forwardedMsg = new Message({ // create forwarded msg
       conversationId: targetConversationId,
       sender,
       text: original.text,
@@ -359,27 +328,28 @@ router.post('/forward', async (req, res) => {
       mimeType: original.mimeType || '',
       durationSec: original.durationSec || 0,
     });
-    await forwardedMsg.save();
+    await forwardedMsg.save(); // save
 
-    // Update conversation
-    conversation.lastMessage = {
+    conversation.lastMessage = { // update last msg
       text: original.text || (original.type === 'voice' ? 'Voice message' : (original.fileName || 'Attachment')),
       sender,
       timestamp: forwardedMsg.createdAt,
     };
-    conversation.participants.forEach((participantId) => {
+
+    conversation.participants.forEach((participantId) => { // unread count
       if (participantId.toString() !== sender) {
         const currentCount = conversation.unreadCount.get(participantId.toString()) || 0;
         conversation.unreadCount.set(participantId.toString(), currentCount + 1);
       }
     });
-    await conversation.save();
 
-    const populated = await Message.findById(forwardedMsg._id)
+    await conversation.save(); // save
+
+    const populated = await Message.findById(forwardedMsg._id) // populate
       .populate('sender', 'name email avatar');
 
-    const io = req.app.get('io');
-    io.to(targetConversationId).emit('newMessage', populated);
+    const io = req.app.get('io'); // socket
+    io.to(targetConversationId).emit('newMessage', populated); // emit
     conversation.participants.forEach((participantId) => {
       io.to(participantId.toString()).emit('newMessage', populated);
       io.to(participantId.toString()).emit('conversationUpdated', {
@@ -389,22 +359,21 @@ router.post('/forward', async (req, res) => {
       });
     });
 
-    res.status(201).json(populated);
+    res.status(201).json(populated); // response
   } catch (err) {
-    console.error('Forward message error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
 // Search messages
-router.get('/search/:conversationId', async (req, res) => {
+router.get('/search/:conversationId', async (req, res) => { // search route
   try {
-    const { q } = req.query;
+    const { q } = req.query; // query text
     if (!q || !q.trim()) {
       return res.status(400).json({ error: 'Search query required' });
     }
 
-    const messages = await Message.find({
+    const messages = await Message.find({ // search query
       conversationId: req.params.conversationId,
       text: { $regex: q.trim(), $options: 'i' },
       deletedForEveryone: { $ne: true },
@@ -413,11 +382,10 @@ router.get('/search/:conversationId', async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(50);
 
-    res.json(messages);
+    res.json(messages); // response
   } catch (err) {
-    console.error('Search error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-module.exports = router;
+module.exports = router; // export router
